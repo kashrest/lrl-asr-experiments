@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+# This script supports any Wav2Vec 2.0 architecture model (e.g. XLS-R, MMS) trained using the CTC algorithm if added to the Hugging Face Hub as a Wav2Vec2ForCTC object.
+# 
+# It also supports language-specific adapter training for MMS-1b-all.
+
 # # Imports
 
 # In[ ]:
@@ -9,12 +13,7 @@
 import matplotlib.pyplot as plt
 import json
 
-from transformers import Wav2Vec2FeatureExtractor
-from transformers import Wav2Vec2Processor
-from transformers import Wav2Vec2CTCTokenizer
-from transformers import Wav2Vec2ForCTC
-from transformers import TrainingArguments
-from transformers import Trainer
+from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2Processor, Wav2Vec2CTCTokenizer, Wav2Vec2ForCTC, TrainingArguments, Trainer
 
 import IPython.display as ipd
 import numpy as np
@@ -32,18 +31,26 @@ from typing import Any, Dict, List, Optional, Union
 
 from datasets import load_metric, load_dataset, Audio
 
+from finetuning_util_hausa import preprocess_texts as custom_hausa_preprocess
+from finetuning_util_hausa import create_vocab_dict, create_data_collator, compute_metrics, ASRDataset
+
 
 # # Global Variables
 
 # In[ ]:
 
 
-assert len(sys.argv) == 13
+# Example commands:
 
-#python wav2vec2-finetuning-hausa "facebook/mms-1b" "hausa-combined-hyperparameter-1" 16 3e-4 10 0.1 0.1 0.0 0.05 0.1 500 combined
-#python baseline_asr_proof-of-concept.py model_card experiment_number batch_size learning_rate num_train_epochs attention_dropout hidden_dropout feat_proj_dropout mask_time_prob layerdrop warmup_steps fluers
-#python baseline_asr_proof-of-concept.py "facebook/wav2vec2-xls-r-300m" "hausa-combined-hyperparameter-1" 16 3e-4 30 0.1 0.1 0.0 0.05 0.1 500 fleurs
-#python baseline_asr_proof-of-concept.py "facebook/wav2vec2-xls-r-300m" "hausa-fleurs-only-hyperparameter-1" 16 3e-4 30 0.1 0.1 0.0 0.05 0.1 500 combined
+# python wav2vec2-finetuning-hausa.py model_card output_dir_name batch_size learning_rate num_epoch attention_dropout hidden_dropout feat_proj_dropout mask_time_prob layer_dropout warmup_steps fleurs_only
+
+# python wav2vec2-finetuning-hausa.py "facebook/mms-1b" "hausa-combined-2" 16 3e-4 20 0.1 0.1 0.0 0.05 0.1 500 combined 
+
+
+# In[ ]:
+
+
+assert len(sys.argv) == 13
 
 
 # In[ ]:
@@ -51,26 +58,23 @@ assert len(sys.argv) == 13
 
 root = "/data/users/kashrest/lrl-asr-experiments/"
 
-pretrained_model_card = sys.argv[1]
+pretrained_model_card = sys.argv[1] 
 
 training_experiment_number = sys.argv[2]
 
 fleurs_only = True if sys.argv[12] == "fleurs" else False
 
-out_dir = root+pretrained_model_card.replace("/", "_")+"/"
+adapters = True if pretrained_model_card == "facebook/mms-1b-all" or "facebook/mms-300m-all" else False
+
+print(f"Training an adapters model = {adapters}")
+
+out_dir = root+pretrained_model_card.replace("/", "_")+"/"+training_experiment_number+"/"
 
 try:
     os.mkdir(out_dir)
 except:
     print(f"Experiment folder already exists") 
 
-out_dir = out_dir+training_experiment_number+"/"
-
-try:
-    os.mkdir(out_dir)
-except:
-    print(f"Experiment folder already exists") 
-    
 cache_dir_fleurs = "/data/users/kashrest/lrl-asr-experiments/data/fleurs"
 cache_dir_cv_13 = cache_dir="/data/users/kashrest/lrl-asr-experiments/data/cv_13"
 
@@ -202,132 +206,23 @@ if fleurs_only is False:
         test_audio_hausa.append(resampled_waveform[0].numpy())
 
 
-# In[ ]:
-
-
-class ASRDataset(torch.utils.data.Dataset):
-    def __init__(self, audio, transcripts, sampling_rate, processor):
-        self.audio = audio
-        self.transcripts = transcripts
-        self.sampling_rate = sampling_rate
-        self.processor = processor
-
-    def __getitem__(self, idx):
-        input_values = self.processor(self.audio[idx], sampling_rate=self.sampling_rate).input_values[0]
-        labels = None
-        with self.processor.as_target_processor():
-            labels = self.processor(self.transcripts[idx]).input_ids
-        item = {}
-        item["input_values"] = input_values
-        item["labels"] = labels
-        #item = {"audio": self.audio[idx], "transcription": self.transcripts[idx], "sampling_rate": self.sampling_rate}
-        return item
-
-    def __len__(self):
-        return len(self.transcripts)
-
-
-# ## Character Vocabulary -- double check normalization from FLEURS
+# ## Character Vocabulary
 # 
 
 # In[ ]:
 
 
-chars_to_remove_regex = '[\,\?\!\-\;\:\"\“\%\‘\'\ʻ\”\�\$\&\(\)\–\—]'
+cleaned_train_transcriptions = custom_hausa_preprocess(train_transcriptions_hausa)
 
-def remove_special_characters(transcription):
-    transcription = transcription.strip()
-    transcription = transcription.lower()
-    transcription = re.sub(chars_to_remove_regex, '', transcription)
-    transcription = re.sub("\[\]\{\}", '', transcription)
-    transcription = re.sub(r'[\\]', '', transcription)
-    transcription = re.sub(r'[/]', '', transcription)
-    transcription = re.sub(u'[¥£°¾½²]', '', transcription)
-    transcription = re.sub(u'[\+><]', '', transcription)
-    #transcription = re.sub(and_sym, "and", transcription)
-    return transcription
+cleaned_val_transcriptions = custom_hausa_preprocess(val_transcriptions_hausa)
 
-def normalize_diacritics(transcription):
-    a = '[āăáã]'
-    u = '[ūúü]'
-    o = '[öõó]' 
-    c = '[ç]'
-    i = '[í]'
-    s = '[ş]'
-    e = '[é]'
-    
-    transcription = re.sub(a, "a", transcription)
-    transcription = re.sub(u, "u", transcription)
-    transcription = re.sub(o, "o", transcription)
-    transcription = re.sub(c, "c", transcription)
-    transcription = re.sub(i, "i", transcription)
-    transcription = re.sub(s, "s", transcription)
-    transcription = re.sub(e, "e", transcription)
+cleaned_test_transcriptions = custom_hausa_preprocess(test_transcriptions_hausa)
 
-    return transcription
-
-cleaned_train_transcriptions = map(remove_special_characters, train_transcriptions_hausa)
-cleaned_train_transcriptions = list(map(normalize_diacritics, list(cleaned_train_transcriptions)))
-
-cleaned_val_transcriptions = map(remove_special_characters, val_transcriptions_hausa)
-cleaned_val_transcriptions = list(map(normalize_diacritics, list(cleaned_val_transcriptions)))
-
-cleaned_test_transcriptions = map(remove_special_characters, test_transcriptions_hausa)
-cleaned_test_transcriptions = list(map(normalize_diacritics, list(cleaned_test_transcriptions)))
-
-
-# In[ ]:
-
-
-# Character vocabulary code from: https://colab.research.google.com/github/patrickvonplaten/notebooks/blob/master/Fine_Tune_XLSR_Wav2Vec2_on_Turkish_ASR_with_%F0%9F%A4%97_Transformers.ipynb#scrollTo=_0kRndSvqaKk
-def extract_all_chars(transcription):
-  all_text = " ".join(transcription)
-  vocab = list(set(all_text))
-  return {"vocab": [vocab], "all_text": [all_text]}
-
-vocab_train = list(map(extract_all_chars, cleaned_train_transcriptions))
-vocab_val = list(map(extract_all_chars, cleaned_val_transcriptions))
-vocab_test = list(map(extract_all_chars, cleaned_test_transcriptions))
-
-
-# In[ ]:
-
-
-vocab_train_chars = []
-for elem in [elem["vocab"][0] for elem in vocab_train]:
-    vocab_train_chars.extend(elem)
-
-vocab_val_chars = []
-for elem in [elem["vocab"][0] for elem in vocab_val]:
-    vocab_val_chars.extend(elem)
-
-vocab_test_chars = []
-for elem in [elem["vocab"][0] for elem in vocab_test]:
-    vocab_test_chars.extend(elem)
-
-
-# In[ ]:
-
-
-vocab_list = list(set(vocab_train_chars) | set(vocab_val_chars) | set(vocab_test_chars))
-vocab_dict = {v: k for k, v in enumerate(vocab_list)}
-
-# for word delimiter, change " " --> "|" (ex. "Hello my name is Kaleen" --> "Hello|my|name|is|Kaleen")
-vocab_dict["|"] = vocab_dict[" "]
-del vocab_dict[" "]
-vocab_dict["[UNK]"] = len(vocab_dict)
-vocab_dict["[PAD]"] = len(vocab_dict) # this is for CTC to predict the end of a character (e.g. "hhh[PAD]iiiiii[PAD]" == "hi")
-
-#print(f"Vocabulary length = {len(vocab_dict)} characters")
-#vocab_dict
-
-
-# In[ ]:
-
+vocab_dict = create_vocab_dict(cleaned_train_transcriptions, cleaned_val_transcriptions, cleaned_test_transcriptions)
 
 # Save vocabulary file
 hausa_vocab_file = out_dir+"vocab_hausa_combined_train_val_test.json"
-with open(hausa_vocab_file, 'w+') as vocab_file:
+with open(hausa_vocab_file, 'w') as vocab_file:
     json.dump(vocab_dict, vocab_file)
 
 tokenizer = Wav2Vec2CTCTokenizer(hausa_vocab_file, unk_token="[UNK]", pad_token="[PAD]", word_delimiter_token="|")
@@ -337,108 +232,11 @@ assert model_sampling_rate == 16000
 feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=model_sampling_rate, padding_value=0.0, do_normalize=True, return_attention_mask=True)
 processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
 
-
-# In[ ]:
-
-
 train_dataset = ASRDataset(train_audio_hausa, cleaned_train_transcriptions, model_sampling_rate, processor)
 val_dataset = ASRDataset(val_audio_hausa, cleaned_val_transcriptions, model_sampling_rate, processor)
 test_dataset = ASRDataset(test_audio_hausa, cleaned_test_transcriptions, model_sampling_rate, processor)
 
-
-# In[ ]:
-
-
-len(train_dataset)
-
-
-# In[ ]:
-
-
-@dataclass
-class DataCollatorCTCWithPadding:
-    """
-    Data collator that will dynamically pad the inputs received.
-    Args:
-        processor (:class:`~transformers.Wav2Vec2Processor`)
-            The processor used for proccessing the data.
-        padding (:obj:`bool`, :obj:`str` or :class:`~transformers.tokenization_utils_base.PaddingStrategy`, `optional`, defaults to :obj:`True`):
-            Select a strategy to pad the returned sequences (according to the model's padding side and padding index)
-            among:
-            * :obj:`True` or :obj:`'longest'`: Pad to the longest sequence in the batch (or no padding if only a single
-              sequence if provided).
-            * :obj:`'max_length'`: Pad to a maximum length specified with the argument :obj:`max_length` or to the
-              maximum acceptable input length for the model if that argument is not provided.
-            * :obj:`False` or :obj:`'do_not_pad'` (default): No padding (i.e., can output a batch with sequences of
-              different lengths).
-        max_length (:obj:`int`, `optional`):
-            Maximum length of the ``input_values`` of the returned list and optionally padding length (see above).
-        max_length_labels (:obj:`int`, `optional`):
-            Maximum length of the ``labels`` returned list and optionally padding length (see above).
-        pad_to_multiple_of (:obj:`int`, `optional`):
-            If set will pad the sequence to a multiple of the provided value.
-            This is especially useful to enable the use of Tensor Cores on NVIDIA hardware with compute capability >=
-            7.5 (Volta).
-    """
-
-    processor: Wav2Vec2Processor
-    padding: Union[bool, str] = True
-    max_length: Optional[int] = None
-    max_length_labels: Optional[int] = None
-    pad_to_multiple_of: Optional[int] = None
-    pad_to_multiple_of_labels: Optional[int] = None
-
-    def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
-        # split inputs and labels since they have to be of different lenghts and need
-        # different padding methods
-        input_features = [{"input_values": feature["input_values"]} for feature in features]
-        label_features = [{"input_ids": feature["labels"]} for feature in features]
-
-        batch = self.processor.pad(
-            input_features,
-            padding=self.padding,
-            max_length=self.max_length,
-            pad_to_multiple_of=self.pad_to_multiple_of,
-            return_tensors="pt",
-        )
-        with self.processor.as_target_processor():
-            labels_batch = self.processor.pad(
-                label_features,
-                padding=self.padding,
-                max_length=self.max_length_labels,
-                pad_to_multiple_of=self.pad_to_multiple_of_labels,
-                return_tensors="pt",
-            )
-
-        # replace padding with -100 to ignore loss correctly
-        labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
-
-        batch["labels"] = labels
-
-        return batch
-
-data_collator = DataCollatorCTCWithPadding(processor=processor, padding=True)
-
-
-# In[ ]:
-
-
-wer_metric = load_metric("wer")
-cer_metric = load_metric("cer")
-
-def compute_metrics(pred):
-    pred_logits = pred.predictions
-    pred_ids = np.argmax(pred_logits, axis=-1)
-
-    pred.label_ids[pred.label_ids == -100] = processor.tokenizer.pad_token_id
-
-    pred_str = processor.batch_decode(pred_ids)
-    # we do not want to group tokens when computing the metrics
-    label_str = processor.batch_decode(pred.label_ids, group_tokens=False)
-
-    wer = wer_metric.compute(predictions=pred_str, references=label_str)
-    cer = cer_metric.compute(predictions=pred_str, references=label_str)
-    return {"wer": wer, "cer": cer}
+data_collator = create_data_collator(processor)
 
 
 # # Training
@@ -465,12 +263,19 @@ model = Wav2Vec2ForCTC.from_pretrained(
     layerdrop=layerdrop,
     ctc_loss_reduction="mean", 
     pad_token_id=processor.tokenizer.pad_token_id,
-    vocab_size=len(processor.tokenizer)
+    vocab_size=len(processor.tokenizer),
+    ignore_mismatched_sizes=True
 )
 
-model.num_parameters() 
-model.freeze_feature_extractor()
-model.gradient_checkpointing_enable()
+if adapters is False:
+    model.freeze_feature_extractor()
+    model.gradient_checkpointing_enable()
+else:
+    model.init_adapter_layers()
+    model.freeze_base_model()
+    adapter_weights = model._get_adapters()
+    for param in adapter_weights.values():
+        param.requires_grad = True
 
 training_args = TrainingArguments(
   output_dir=out_dir,
@@ -501,11 +306,13 @@ trainer = Trainer(
     tokenizer=processor.feature_extractor,
 )
 
+
+# In[ ]:
+
+
 start = time.time()
 trainer.train()
 end = time.time()
-
-print(f"Training took {end-start} seconds")
 
 hyperparameters_file = out_dir+"hyperparameters.jsonl"
 with open(hyperparameters_file, "w") as f:
@@ -532,7 +339,7 @@ def _output_evaluation_metrics(processor, trainer, split_dataset: ASRDataset, sp
     eval_preds = compute_metrics(preds)
 
     evaluation_output["metrics"] = eval_preds
-    with open(file, "w+") as f:
+    with open(file, "w") as f:
         json.dump(evaluation_output, f)
     
     
@@ -544,12 +351,12 @@ def _output_evaluation_metrics(processor, trainer, split_dataset: ASRDataset, sp
     pred_strs = processor.batch_decode(pred_ids, skip_special_tokens=True)
     label_strs = processor.batch_decode(preds.label_ids, group_tokens=False, skip_special_tokens=True)
 
-    with open(out_dir+"trained_model_preds_"+split_dataset_str+".jsonl", "w+") as f:
+    with open(out_dir+"trained_model_preds_"+split_dataset_str+".jsonl", "w") as f:
         for pred in pred_strs:
             json.dump(pred, f)
             f.write("\n")
 
-    with open(out_dir+"trained_model_gold_"+split_dataset_str+".jsonl", "w+") as f:
+    with open(out_dir+"trained_model_gold_"+split_dataset_str+".jsonl", "w") as f:
         for gold in label_strs:
             json.dump(gold, f)
             f.write("\n")
@@ -640,71 +447,4 @@ if fleurs_only is False:
 
     test_dataset_bible = ASRDataset(bible_hausa_test_audio, cleaned_test_transcriptions_bible, model_sampling_rate, processor)
     _output_evaluation_metrics(processor, trainer, test_dataset_bible, "bible-tts_test", out_dir+"trained_model_predicted_bible-tts_test-metrics.jsonl")
-
-
-# In[ ]:
-
-
-"""# Evaluation and predictions
-
-evaluation_output = {"dataset-info": f"For '{fleurs_only}' dataset, with trainset length {len(train_dataset)}"}
-
-preds_val = trainer.predict(val_dataset)
-eval_val = compute_metrics(preds_val)
-
-evaluation_output["validation set metrics"] = eval_val
-
-preds_test = trainer.predict(test_dataset)
-eval_test = compute_metrics(preds_test)
-
-evaluation_output["test set metrics"] = eval_test
-
-with open(out_dir+"trained_model_evaluation_metrics.jsonl", "w") as f:
-    json.dump(evaluation_output, f)"""
-
-
-# In[ ]:
-
-
-"""pred_logits = preds_val.predictions
-pred_ids = np.argmax(pred_logits, axis=-1)
-
-preds_val.label_ids[preds_val.label_ids == -100] = processor.tokenizer.pad_token_id
-
-pred_strs = processor.batch_decode(pred_ids)
-# we do not want to group tokens when computing the metrics
-label_strs = processor.batch_decode(preds_val.label_ids, group_tokens=False)
-
-with open(out_dir+"trained_model_predicted_val.jsonl", "w") as f:
-    for pred in pred_strs:
-        json.dump(pred, f)
-        f.write("\n")
-        
-with open(out_dir+"trained_model_gold_val.jsonl", "w") as f:
-    for gold in label_strs:
-        json.dump(gold, f)
-        f.write("\n")"""
-
-
-# In[ ]:
-
-
-"""pred_logits = preds_test.predictions
-pred_ids = np.argmax(pred_logits, axis=-1)
-
-preds_test.label_ids[preds_test.label_ids == -100] = processor.tokenizer.pad_token_id
-
-pred_strs = processor.batch_decode(pred_ids)
-# we do not want to group tokens when computing the metrics
-label_strs = processor.batch_decode(preds_test.label_ids, group_tokens=False)
-
-with open(out_dir+"trained_model_predicted_test.jsonl", "w") as f:
-    for pred in pred_strs:
-        json.dump(pred, f)
-        f.write("\n")
-        
-with open(out_dir+"trained_model_gold_test.jsonl", "w") as f:
-    for gold in label_strs:
-        json.dump(gold, f)
-        f.write("\n")"""
 
