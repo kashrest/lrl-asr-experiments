@@ -1,60 +1,76 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+# # Imports
+
 # In[ ]:
 
 
-from datasets import load_dataset, load_metric, Audio
-from transformers import WhisperFeatureExtractor, WhisperTokenizer, WhisperProcessor, Seq2SeqTrainingArguments, WhisperForConditionalGeneration, Seq2SeqTrainer
+import matplotlib.pyplot as plt
+import json
 
+from transformers import Wav2Vec2FeatureExtractor
+from transformers import Wav2Vec2Processor
+from transformers import Wav2Vec2CTCTokenizer
+from transformers import Wav2Vec2ForCTC
+from transformers import TrainingArguments
+from transformers import Trainer
+
+import IPython.display as ipd
+import numpy as np
+import random
+import os
 import torch
-import time
-
-from dataclasses import dataclass
-from typing import Any, Dict, List, Union
-
-import evaluate
-
 import torchaudio
 import torchaudio.transforms as T
+import time
 import re
 import sys
-import os
-import json
-import numpy as np
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
+from datasets import load_metric, load_dataset, Audio
+
+
+# # Global Variables
 
 # In[ ]:
 
 
-assert len(sys.argv) == 7
+assert len(sys.argv) == 13
 
-#python whisper-finetuning-experiments.py model_card experiment_name train_batch_size learning_rate num_train_epochs fluers
-#python whisper-finetuning-experiments.py "openai/whisper-large" "fleurs_only_preprocessed_experiment_1" 16 1e-5 20 fleurs
-#python whisper-finetuning-experiments.py "openai/whisper-large" "fleurs_only_preprocessed_experiment_1" 16 1e-5 20 combined
+#python wav2vec2-finetuning-hausa "facebook/mms-1b" "hausa-combined-hyperparameter-1" 16 3e-4 10 0.1 0.1 0.0 0.05 0.1 500 combined
+#python baseline_asr_proof-of-concept.py model_card experiment_number batch_size learning_rate num_train_epochs attention_dropout hidden_dropout feat_proj_dropout mask_time_prob layerdrop warmup_steps fluers
+#python baseline_asr_proof-of-concept.py "facebook/wav2vec2-xls-r-300m" "hausa-combined-hyperparameter-1" 16 3e-4 30 0.1 0.1 0.0 0.05 0.1 500 fleurs
+#python baseline_asr_proof-of-concept.py "facebook/wav2vec2-xls-r-300m" "hausa-fleurs-only-hyperparameter-1" 16 3e-4 30 0.1 0.1 0.0 0.05 0.1 500 combined
+
+
+# In[ ]:
+
 
 root = "/data/users/kashrest/lrl-asr-experiments/"
-model_card = sys.argv[1]
-experiment_name = sys.argv[2]
-train_batch_size = int(sys.argv[3])
-learning_rate = float(sys.argv[4])
-num_train_epochs = int(sys.argv[5])
-fleurs_only = True if sys.argv[6] == "fleurs" else False
 
-out_dir = root+model_card.replace("/", "_")+"/"+experiment_name+"/"
+pretrained_model_card = sys.argv[1]
+
+training_experiment_number = sys.argv[2]
+
+fleurs_only = True if sys.argv[12] == "fleurs" else False
+
+out_dir = root+pretrained_model_card.replace("/", "_")+"/"
 
 try:
     os.mkdir(out_dir)
 except:
     print(f"Experiment folder already exists") 
 
+out_dir = out_dir+training_experiment_number+"/"
 
-# In[ ]:
-
-
+try:
+    os.mkdir(out_dir)
+except:
+    print(f"Experiment folder already exists") 
+    
 cache_dir_fleurs = "/data/users/kashrest/lrl-asr-experiments/data/fleurs"
 cache_dir_cv_13 = cache_dir="/data/users/kashrest/lrl-asr-experiments/data/cv_13"
 
@@ -189,6 +205,34 @@ if fleurs_only is False:
 # In[ ]:
 
 
+class ASRDataset(torch.utils.data.Dataset):
+    def __init__(self, audio, transcripts, sampling_rate, processor):
+        self.audio = audio
+        self.transcripts = transcripts
+        self.sampling_rate = sampling_rate
+        self.processor = processor
+
+    def __getitem__(self, idx):
+        input_values = self.processor(self.audio[idx], sampling_rate=self.sampling_rate).input_values[0]
+        labels = None
+        with self.processor.as_target_processor():
+            labels = self.processor(self.transcripts[idx]).input_ids
+        item = {}
+        item["input_values"] = input_values
+        item["labels"] = labels
+        #item = {"audio": self.audio[idx], "transcription": self.transcripts[idx], "sampling_rate": self.sampling_rate}
+        return item
+
+    def __len__(self):
+        return len(self.transcripts)
+
+
+# ## Character Vocabulary -- double check normalization from FLEURS
+# 
+
+# In[ ]:
+
+
 chars_to_remove_regex = '[\,\?\!\-\;\:\"\“\%\‘\'\ʻ\”\�\$\&\(\)\–\—]'
 
 def remove_special_characters(transcription):
@@ -235,33 +279,63 @@ cleaned_test_transcriptions = list(map(normalize_diacritics, list(cleaned_test_t
 # In[ ]:
 
 
-processor = WhisperProcessor.from_pretrained(model_card, language="Hausa", task="transcribe")
+# Character vocabulary code from: https://colab.research.google.com/github/patrickvonplaten/notebooks/blob/master/Fine_Tune_XLSR_Wav2Vec2_on_Turkish_ASR_with_%F0%9F%A4%97_Transformers.ipynb#scrollTo=_0kRndSvqaKk
+def extract_all_chars(transcription):
+  all_text = " ".join(transcription)
+  vocab = list(set(all_text))
+  return {"vocab": [vocab], "all_text": [all_text]}
+
+vocab_train = list(map(extract_all_chars, cleaned_train_transcriptions))
+vocab_val = list(map(extract_all_chars, cleaned_val_transcriptions))
+vocab_test = list(map(extract_all_chars, cleaned_test_transcriptions))
 
 
 # In[ ]:
 
 
-class ASRDataset(torch.utils.data.Dataset):
-    def __init__(self, audio, transcripts, sampling_rate, processor):#feature_extractor, tokenizer):
-        self.audio = audio
-        self.transcripts = transcripts
-        self.sampling_rate = sampling_rate
-        self.processor = processor
-        """self.tokenizer = tokenizer
-        self.feature_extractor = feature_extractor
-"""
-    def __getitem__(self, idx):
-        input_values = self.processor.feature_extractor(self.audio[idx], sampling_rate=self.sampling_rate).input_features[0]
-        labels = self.processor.tokenizer(self.transcripts[idx]).input_ids
-        
-        item = {}
-        item["input_features"] = input_values
-        item["labels"] = labels
-        
-        return item
+vocab_train_chars = []
+for elem in [elem["vocab"][0] for elem in vocab_train]:
+    vocab_train_chars.extend(elem)
 
-    def __len__(self):
-        return len(self.transcripts)
+vocab_val_chars = []
+for elem in [elem["vocab"][0] for elem in vocab_val]:
+    vocab_val_chars.extend(elem)
+
+vocab_test_chars = []
+for elem in [elem["vocab"][0] for elem in vocab_test]:
+    vocab_test_chars.extend(elem)
+
+
+# In[ ]:
+
+
+vocab_list = list(set(vocab_train_chars) | set(vocab_val_chars) | set(vocab_test_chars))
+vocab_dict = {v: k for k, v in enumerate(vocab_list)}
+
+# for word delimiter, change " " --> "|" (ex. "Hello my name is Kaleen" --> "Hello|my|name|is|Kaleen")
+vocab_dict["|"] = vocab_dict[" "]
+del vocab_dict[" "]
+vocab_dict["[UNK]"] = len(vocab_dict)
+vocab_dict["[PAD]"] = len(vocab_dict) # this is for CTC to predict the end of a character (e.g. "hhh[PAD]iiiiii[PAD]" == "hi")
+
+#print(f"Vocabulary length = {len(vocab_dict)} characters")
+#vocab_dict
+
+
+# In[ ]:
+
+
+# Save vocabulary file
+hausa_vocab_file = out_dir+"vocab_hausa_combined_train_val_test.json"
+with open(hausa_vocab_file, 'w+') as vocab_file:
+    json.dump(vocab_dict, vocab_file)
+
+tokenizer = Wav2Vec2CTCTokenizer(hausa_vocab_file, unk_token="[UNK]", pad_token="[PAD]", word_delimiter_token="|")
+
+assert model_sampling_rate == 16000
+
+feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=model_sampling_rate, padding_value=0.0, do_normalize=True, return_attention_mask=True)
+processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
 
 
 # In[ ]:
@@ -282,93 +356,148 @@ len(train_dataset)
 
 
 @dataclass
-class DataCollatorSpeechSeq2SeqWithPadding:
-    processor: Any
+class DataCollatorCTCWithPadding:
+    """
+    Data collator that will dynamically pad the inputs received.
+    Args:
+        processor (:class:`~transformers.Wav2Vec2Processor`)
+            The processor used for proccessing the data.
+        padding (:obj:`bool`, :obj:`str` or :class:`~transformers.tokenization_utils_base.PaddingStrategy`, `optional`, defaults to :obj:`True`):
+            Select a strategy to pad the returned sequences (according to the model's padding side and padding index)
+            among:
+            * :obj:`True` or :obj:`'longest'`: Pad to the longest sequence in the batch (or no padding if only a single
+              sequence if provided).
+            * :obj:`'max_length'`: Pad to a maximum length specified with the argument :obj:`max_length` or to the
+              maximum acceptable input length for the model if that argument is not provided.
+            * :obj:`False` or :obj:`'do_not_pad'` (default): No padding (i.e., can output a batch with sequences of
+              different lengths).
+        max_length (:obj:`int`, `optional`):
+            Maximum length of the ``input_values`` of the returned list and optionally padding length (see above).
+        max_length_labels (:obj:`int`, `optional`):
+            Maximum length of the ``labels`` returned list and optionally padding length (see above).
+        pad_to_multiple_of (:obj:`int`, `optional`):
+            If set will pad the sequence to a multiple of the provided value.
+            This is especially useful to enable the use of Tensor Cores on NVIDIA hardware with compute capability >=
+            7.5 (Volta).
+    """
+
+    processor: Wav2Vec2Processor
+    padding: Union[bool, str] = True
+    max_length: Optional[int] = None
+    max_length_labels: Optional[int] = None
+    pad_to_multiple_of: Optional[int] = None
+    pad_to_multiple_of_labels: Optional[int] = None
 
     def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
-        # split inputs and labels since they have to be of different lengths and need different padding methods
-        # first treat the audio inputs by simply returning torch tensors
-        input_features = [{"input_features": feature["input_features"]} for feature in features]
-        batch = self.processor.feature_extractor.pad(input_features, return_tensors="pt")
-
-        # get the tokenized label sequences
+        # split inputs and labels since they have to be of different lenghts and need
+        # different padding methods
+        input_features = [{"input_values": feature["input_values"]} for feature in features]
         label_features = [{"input_ids": feature["labels"]} for feature in features]
-        # pad the labels to max length
-        labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
+
+        batch = self.processor.pad(
+            input_features,
+            padding=self.padding,
+            max_length=self.max_length,
+            pad_to_multiple_of=self.pad_to_multiple_of,
+            return_tensors="pt",
+        )
+        with self.processor.as_target_processor():
+            labels_batch = self.processor.pad(
+                label_features,
+                padding=self.padding,
+                max_length=self.max_length_labels,
+                pad_to_multiple_of=self.pad_to_multiple_of_labels,
+                return_tensors="pt",
+            )
 
         # replace padding with -100 to ignore loss correctly
         labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
 
-        # if bos token is appended in previous tokenization step,
-        # cut bos token here as it's append later anyways
-        if (labels[:, 0] == self.processor.tokenizer.bos_token_id).all().cpu().item():
-            labels = labels[:, 1:]
-
         batch["labels"] = labels
 
         return batch
-    
-data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
+
+data_collator = DataCollatorCTCWithPadding(processor=processor, padding=True)
 
 
 # In[ ]:
 
 
-metric_wer = evaluate.load("wer")
-metric_cer = evaluate.load("cer")
+wer_metric = load_metric("wer")
+cer_metric = load_metric("cer")
 
 def compute_metrics(pred):
-    pred_ids = pred.predictions
-    label_ids = pred.label_ids
+    pred_logits = pred.predictions
+    pred_ids = np.argmax(pred_logits, axis=-1)
 
-    # replace -100 with the pad_token_id
-    label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
+    pred.label_ids[pred.label_ids == -100] = processor.tokenizer.pad_token_id
 
+    pred_str = processor.batch_decode(pred_ids)
     # we do not want to group tokens when computing the metrics
-    pred_str = processor.tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
-    label_str = processor.tokenizer.batch_decode(label_ids, skip_special_tokens=True)
+    label_str = processor.batch_decode(pred.label_ids, group_tokens=False)
 
-    wer = 100 * metric_wer.compute(predictions=pred_str, references=label_str)
-    cer = 100 * metric_cer.compute(predictions=pred_str, references=label_str)
-
+    wer = wer_metric.compute(predictions=pred_str, references=label_str)
+    cer = cer_metric.compute(predictions=pred_str, references=label_str)
     return {"wer": wer, "cer": cer}
 
 
+# # Training
+
 # In[ ]:
 
 
-model = WhisperForConditionalGeneration.from_pretrained(model_card)
+batch_size = int(sys.argv[3])
+learning_rate = float(sys.argv[4])
+num_train_epochs = int(sys.argv[5])
+attention_dropout = float(sys.argv[6])
+hidden_dropout = float(sys.argv[7])
+feat_proj_dropout = float(sys.argv[8])
+mask_time_prob = float(sys.argv[9])
+layerdrop = float(sys.argv[10])
+warmup_steps = int(sys.argv[11])
+    
+model = Wav2Vec2ForCTC.from_pretrained(
+    pretrained_model_card, 
+    attention_dropout=attention_dropout,
+    hidden_dropout=hidden_dropout,
+    feat_proj_dropout=feat_proj_dropout,
+    mask_time_prob=mask_time_prob,
+    layerdrop=layerdrop,
+    ctc_loss_reduction="mean", 
+    pad_token_id=processor.tokenizer.pad_token_id,
+    vocab_size=len(processor.tokenizer)
+)
 
-model.config.forced_decoder_ids = None
-model.config.suppress_tokens = []
+model.num_parameters() 
+model.freeze_feature_extractor()
+model.gradient_checkpointing_enable()
 
-training_args = Seq2SeqTrainingArguments(
-    output_dir=out_dir,  # change to a repo name of your choice
-    per_device_train_batch_size=train_batch_size,
-    gradient_accumulation_steps=1,  # increase by 2x for every 2x decrease in batch size
-    learning_rate=learning_rate,
-    warmup_steps=500,
-    num_train_epochs=num_train_epochs,
-    gradient_checkpointing=True,
-    fp16=True,
-    evaluation_strategy="steps",
-    per_device_eval_batch_size=8,
-    predict_with_generate=True,
-    generation_max_length=225,
-    save_steps=100,
-    eval_steps=100,
-    save_total_limit=2, 
-    load_best_model_at_end=True,
-    metric_for_best_model="wer",
-    greater_is_better=False)
+training_args = TrainingArguments(
+  output_dir=out_dir,
+  group_by_length=True,
+  per_device_train_batch_size=batch_size,
+  gradient_accumulation_steps=2,
+  evaluation_strategy="steps",
+  num_train_epochs=num_train_epochs,
+  fp16=True,
+  save_steps=100,
+  eval_steps=100,
+  logging_steps=10,
+  load_best_model_at_end=True,
+  learning_rate=learning_rate,
+  warmup_steps=warmup_steps,
+  save_total_limit=2,
+  metric_for_best_model="wer",
+  greater_is_better=False
+)
 
-trainer = Seq2SeqTrainer(
-    args=training_args,
+trainer = Trainer(
     model=model,
-    train_dataset=train_dataset,
-    eval_dataset=val_dataset,
     data_collator=data_collator,
+    args=training_args,
     compute_metrics=compute_metrics,
+    train_dataset=train_dataset,
+    eval_dataset=val_dataset, 
     tokenizer=processor.feature_extractor,
 )
 
@@ -376,81 +505,21 @@ start = time.time()
 trainer.train()
 end = time.time()
 
-with open(out_dir+"hyperparameters.jsonl", "w+") as f:
-    out = {}
-    out["train_batch_size"] = train_batch_size
-    out["learning_rate"] = learning_rate
-    out["num_train_epochs"] = num_train_epochs
-    out["training time in seconds"] = end-start
-    json.dump(out, f)
-
 print(f"Training took {end-start} seconds")
 
-
-# In[ ]:
-
-
-# Evaluation and predictions
-
-"""evaluation_output = {"dataset-info": f"For '{fleurs_only}' dataset, with trainset length {len(train_dataset)}"}
-
-preds_val = trainer.predict(val_dataset)
-eval_val = compute_metrics(preds_val)
-
-evaluation_output["validation set metrics"] = eval_val
-
-preds_test = trainer.predict(test_dataset)
-eval_test = compute_metrics(preds_test)
-
-evaluation_output["test set metrics"] = eval_test
-
-with open(out_dir+"trained_model_evaluation_metrics.jsonl", "w") as f:
-    json.dump(evaluation_output, f)"""
-
-
-# In[ ]:
-
-
-"""pred_logits = preds_val.predictions
-pred_ids = np.argmax(pred_logits, axis=-1)
-preds_val.label_ids[preds_val.label_ids == -100] = processor.tokenizer.pad_token_id
-
-pred_strs = processor.batch_decode(pred_ids)
-# we do not want to group tokens when computing the metrics
-label_strs = processor.batch_decode(preds_val.label_ids, group_tokens=False)
-
-with open(out_dir+"trained_model_predicted_val.jsonl", "w") as f:
-    for pred in pred_strs:
-        json.dump(pred, f)
-        f.write("\n")
-        
-with open(out_dir+"trained_model_gold_val.jsonl", "w") as f:
-    for gold in label_strs:
-        json.dump(gold, f)
-        f.write("\n")"""
-
-
-# In[ ]:
-
-
-"""pred_logits = preds_test.predictions
-pred_ids = np.argmax(pred_logits, axis=-1)
-
-preds_test.label_ids[preds_test.label_ids == -100] = processor.tokenizer.pad_token_id
-
-pred_strs = processor.batch_decode(pred_ids)
-# we do not want to group tokens when computing the metrics
-label_strs = processor.batch_decode(preds_test.label_ids, group_tokens=False)
-
-with open(out_dir+"trained_model_predicted_test.jsonl", "w") as f:
-    for pred in pred_strs:
-        json.dump(pred, f)
-        f.write("\n")
-        
-with open(out_dir+"trained_model_gold_test.jsonl", "w") as f:
-    for gold in label_strs:
-        json.dump(gold, f)
-        f.write("\n")"""
+hyperparameters_file = out_dir+"hyperparameters.jsonl"
+with open(hyperparameters_file, "w") as f:
+    obj = {"training batch size": batch_size,
+           "learning rate": learning_rate,
+           "number of training epochs": num_train_epochs,
+           "attention dropout probability": attention_dropout,
+           "hidden layer dropout probability": hidden_dropout,
+           "feature projection layer dropout probability": feat_proj_dropout,
+           "mask time probability": mask_time_prob,
+           "layer dropout probability": layerdrop,
+           "warm up steps": warmup_steps,
+           "training time in seconds": end-start}
+    json.dump(obj, f)
 
 
 # In[ ]:
@@ -463,7 +532,7 @@ def _output_evaluation_metrics(processor, trainer, split_dataset: ASRDataset, sp
     eval_preds = compute_metrics(preds)
 
     evaluation_output["metrics"] = eval_preds
-    with open(file, "w") as f:
+    with open(file, "w+") as f:
         json.dump(evaluation_output, f)
     
     
@@ -475,12 +544,12 @@ def _output_evaluation_metrics(processor, trainer, split_dataset: ASRDataset, sp
     pred_strs = processor.batch_decode(pred_ids, skip_special_tokens=True)
     label_strs = processor.batch_decode(preds.label_ids, group_tokens=False, skip_special_tokens=True)
 
-    with open(out_dir+"trained_model_preds_"+split_dataset_str+".jsonl", "w") as f:
+    with open(out_dir+"trained_model_preds_"+split_dataset_str+".jsonl", "w+") as f:
         for pred in pred_strs:
             json.dump(pred, f)
             f.write("\n")
 
-    with open(out_dir+"trained_model_gold_"+split_dataset_str+".jsonl", "w") as f:
+    with open(out_dir+"trained_model_gold_"+split_dataset_str+".jsonl", "w+") as f:
         for gold in label_strs:
             json.dump(gold, f)
             f.write("\n")
@@ -576,5 +645,66 @@ if fleurs_only is False:
 # In[ ]:
 
 
+"""# Evaluation and predictions
 
+evaluation_output = {"dataset-info": f"For '{fleurs_only}' dataset, with trainset length {len(train_dataset)}"}
+
+preds_val = trainer.predict(val_dataset)
+eval_val = compute_metrics(preds_val)
+
+evaluation_output["validation set metrics"] = eval_val
+
+preds_test = trainer.predict(test_dataset)
+eval_test = compute_metrics(preds_test)
+
+evaluation_output["test set metrics"] = eval_test
+
+with open(out_dir+"trained_model_evaluation_metrics.jsonl", "w") as f:
+    json.dump(evaluation_output, f)"""
+
+
+# In[ ]:
+
+
+"""pred_logits = preds_val.predictions
+pred_ids = np.argmax(pred_logits, axis=-1)
+
+preds_val.label_ids[preds_val.label_ids == -100] = processor.tokenizer.pad_token_id
+
+pred_strs = processor.batch_decode(pred_ids)
+# we do not want to group tokens when computing the metrics
+label_strs = processor.batch_decode(preds_val.label_ids, group_tokens=False)
+
+with open(out_dir+"trained_model_predicted_val.jsonl", "w") as f:
+    for pred in pred_strs:
+        json.dump(pred, f)
+        f.write("\n")
+        
+with open(out_dir+"trained_model_gold_val.jsonl", "w") as f:
+    for gold in label_strs:
+        json.dump(gold, f)
+        f.write("\n")"""
+
+
+# In[ ]:
+
+
+"""pred_logits = preds_test.predictions
+pred_ids = np.argmax(pred_logits, axis=-1)
+
+preds_test.label_ids[preds_test.label_ids == -100] = processor.tokenizer.pad_token_id
+
+pred_strs = processor.batch_decode(pred_ids)
+# we do not want to group tokens when computing the metrics
+label_strs = processor.batch_decode(preds_test.label_ids, group_tokens=False)
+
+with open(out_dir+"trained_model_predicted_test.jsonl", "w") as f:
+    for pred in pred_strs:
+        json.dump(pred, f)
+        f.write("\n")
+        
+with open(out_dir+"trained_model_gold_test.jsonl", "w") as f:
+    for gold in label_strs:
+        json.dump(gold, f)
+        f.write("\n")"""
 
