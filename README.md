@@ -2,13 +2,16 @@
 
 # Automatic Speech Recognition (ASR) Tutorial: Fine-tune a pretrained, multilingual ASR model on FLEURS
 
+In this tutorial, we will be evaluating and improving a multilingual ASR model for a language in the FLEURS dataset. We will focus on Hausa, but you can follow along in any language in FLEURS. See the FLEURS dataset paper for a list of supported languages: https://arxiv.org/abs/2205.12446
+
 ## Environment 
 
-First, clone this GitHub repository in your local machine.
+First, clone this GitHub repository in your local machine to get the scripts we will be using in this tutorial.
 
 Then, create a virtual environment for your project. We recommend Anaconda package manager. You can create a conda environment with all the required packages using this command:
  `conda env create -f environment.yml` which creates a conda virtual environment named "asr" containing all the necessary packages.
 
+Or, you can create your own environment and install the following packages:
 ## Finetuning on FLEURS
 
 (example is Hausa)
