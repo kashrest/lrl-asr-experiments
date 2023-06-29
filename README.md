@@ -4,4 +4,4 @@
 
 ## Environment 
 
-Create a virtual environment for your project We recommend Anaconda package manager. To install 
+Create a virtual environment for your project We recommend Anaconda package manager. You can create a conda environbemntw ith all the required packages using this command:
