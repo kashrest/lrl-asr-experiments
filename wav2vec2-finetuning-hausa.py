@@ -64,7 +64,7 @@ training_experiment_number = sys.argv[2]
 
 fleurs_only = True if sys.argv[12] == "fleurs" else False
 
-adapters = True if pretrained_model_card == "facebook/mms-1b-all" or "facebook/mms-300m-all" else False
+adapters = True if (pretrained_model_card == "facebook/mms-1b-all" or pretrained_model_card == "facebook/mms-300m-all") else False
 
 print(f"Training an adapters model = {adapters}")
 
