@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Optional, Union
 from datasets import load_metric, load_dataset, Audio
 
 from finetuning_util_hausa import preprocess_texts as custom_hausa_preprocess
-from finetuning_util_hausa import create_vocab_dict, create_data_collator, compute_metrics, ASRDataset
+from finetuning_util_hausa import create_vocab_dict, create_data_collator, ASRDataset
 
 
 # # Global Variables
@@ -239,6 +239,27 @@ test_dataset = ASRDataset(test_audio_hausa, cleaned_test_transcriptions, model_s
 data_collator = create_data_collator(processor)
 
 
+# In[ ]:
+
+
+def compute_metrics(pred):
+    wer_metric = load_metric("wer")
+    cer_metric = load_metric("cer")
+    
+    pred_logits = pred.predictions
+    pred_ids = np.argmax(pred_logits, axis=-1)
+
+    pred.label_ids[pred.label_ids == -100] = processor.tokenizer.pad_token_id
+
+    pred_str = processor.batch_decode(pred_ids)
+    # we do not want to group tokens when computing the metrics
+    label_str = processor.batch_decode(pred.label_ids, group_tokens=False)
+
+    wer = wer_metric.compute(predictions=pred_str, references=label_str)
+    cer = cer_metric.compute(predictions=pred_str, references=label_str)
+    return {"wer": wer, "cer": cer}
+
+
 # # Training
 
 # In[ ]:
@@ -386,8 +407,8 @@ for elem in fleurs_hausa_test:
     fleurs_hausa_test_audio.append(elem["audio"]["array"])
     fleurs_hausa_test_transcriptions.append(elem["raw_transcription"])
 
-cleaned_val_transcriptions_fleurs = list(map(normalize_diacritics, list(map(remove_special_characters, fleurs_hausa_val_transcriptions))))
-cleaned_test_transcriptions_fleurs = list(map(normalize_diacritics, list(map(remove_special_characters, fleurs_hausa_test_transcriptions))))
+cleaned_val_transcriptions_fleurs = custom_hausa_preprocess(fleurs_hausa_val_transcriptions)
+cleaned_test_transcriptions_fleurs = custom_hausa_preprocess(fleurs_hausa_test_transcriptions)
 
 val_dataset_fleurs = ASRDataset(fleurs_hausa_val_audio, cleaned_val_transcriptions_fleurs, model_sampling_rate, processor)
 _output_evaluation_metrics(processor, trainer, val_dataset_fleurs, "fleurs_validation", out_dir+"trained_model_predicted_fleurs_val-metrics.jsonl")
@@ -439,12 +460,18 @@ if fleurs_only is False:
         bible_hausa_test_audio.append(resampled_waveform[0].numpy())
     
     
-    cleaned_val_transcriptions_bible = list(map(normalize_diacritics, list(map(remove_special_characters, bible_hausa_val_transcriptions))))
-    cleaned_test_transcriptions_bible = list(map(normalize_diacritics, list(map(remove_special_characters, bible_hausa_test_transcriptions))))    
+    cleaned_val_transcriptions_bible = custom_hausa_preprocess(bible_hausa_val_transcriptions)
+    cleaned_test_transcriptions_bible = custom_hausa_preprocess(bible_hausa_test_transcriptions)    
         
     val_dataset_bible = ASRDataset(bible_hausa_val_audio, cleaned_val_transcriptions_bible, model_sampling_rate, processor)
     _output_evaluation_metrics(processor, trainer, val_dataset_bible, "bible-tts_validation", out_dir+"trained_model_predicted_bible-tts_val-metrics.jsonl")
 
     test_dataset_bible = ASRDataset(bible_hausa_test_audio, cleaned_test_transcriptions_bible, model_sampling_rate, processor)
     _output_evaluation_metrics(processor, trainer, test_dataset_bible, "bible-tts_test", out_dir+"trained_model_predicted_bible-tts_test-metrics.jsonl")
+
+
+# In[ ]:
+
+
+
 
