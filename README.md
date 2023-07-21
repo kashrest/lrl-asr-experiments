@@ -65,3 +65,7 @@ Open up a web browser and paste the url from before. You should see your directo
 For this tutorial, we recommend using Google Colab Pro, so you have access to an NVIDIA A100 40 GB GPU. 
 
 For saving model training checkpoints, you can specify an output directory on the virtual machine. Do not save on Google Drive by mounting because some checkpoints may take a few GBs. However, your output directory on the virtual machine will disappear once the runtime is disconnected. So, after training, make sure to download the checkpoints to your local machine or wherever you have some space (such as Hugging Face Hub, etc).
+
+**Important note about saving files/data on Google Colab**
+
+Once the runtime disconnects/terminates, all your data will be lost and once you reconnect, you will be connected to a new runtime. The runtime will disconnect if it has remained idle for 90 minutes, or if it has been in use for 12 hours. Make sure you save any model checkpoints/outputs if you would like to investigate further, by downloading the data to your local machine or some other form of storage.
