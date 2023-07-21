@@ -1,8 +1,14 @@
+"""
+Example transcript preprocessing script, for Hausa.
+
+To use the finetuning.py script, you must provide the name of a Python script with a preprocess() function such as this one.
+"""
+
 import re
 from typing import List
 
 
-def preprocess(transcriptions: List[str]) -> str: 
+def preprocess(transcriptions: List[str]) -> List[str]: 
     chars_to_remove_regex = '[\,\?\!\-\;\:\"\“\%\‘\'\ʻ\”\�\$\&\(\)\–\—]'
 
     def _remove_special_characters(transcription):
