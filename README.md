@@ -1,31 +1,48 @@
 # lrl-asr-experiments
 
-# Automatic Speech Recognition (ASR) Tutorial: Fine-tune a pretrained, multilingual ASR model on FLEURS
+To install this GitHub repo, run
+`git clone 
+# Automatic Speech Recognition (ASR) Tutorial: Setting up your coding environment
 
-In this tutorial, we will be evaluating and improving a multilingual ASR model for a language in the FLEURS dataset. We will focus on Hausa, but you can follow along in any language in FLEURS. See the FLEURS dataset paper for a list of supported languages: https://arxiv.org/abs/2205.12446
+## asr-tutorial-fleurs-[nlp-gpu-02].ipynb
+To understand the ASR workflow, you can follow this tutorial. We are assuming you are using the nlp-gpu-02 machine (NVIDIA A100 80 GB). Before starting this tutorial, you will need to create a virtual environment for this project so you can download all the required packages without affecting your other projects. We recommend using miniconda (conda) to create a virtual environment. In your terminal (in a folder of your choosing) run these commands:
 
-## Environment 
-
-First, clone this GitHub repository in your local machine to get the scripts we will be using in this tutorial.
-
-Then, create a virtual environment for your project. We recommend Anaconda package manager. You can create a conda environment with all the required packages using this command:
- `conda env create -f environment.yml` which creates a conda virtual environment named "asr" containing all the necessary packages.
-
-Or, you can create your own environment and install the following packages:
-## Finetuning on FLEURS
-
-(example is Hausa)
-
-We will be ussing the FLEURS dataset (https://arxiv.org/abs/2205.12446) which has data for 102 languages. There are 3 major open-source ASR multilingual models available:
-* XLS-R 
-* Whisper
-* MMS
-
-(will combine scripts for Whisper and Wav2Vec2 later)  
-
-You can create your own preprocessing script, that takes into account linguistic aspects, or use a basic (to be added from Whisper) preprocdessing script provided that removes special characters and does lowercase (credit: Whisper). Here for our example in Hausa, we have a custom preprocessing function. Let's finetune MMS-1b-all on the FLEURS Hausa dataset by running this command using the wav2vec2-finetuning-hausa.py script in this repo:
+1. **Install miniconda** ([tutorial](https://educe-ubc.github.io/conda.html))
 ```
-python wav2vec2-finetuning-hausa.py model_card output_dir_name batch_size learning_rate num_epoch attention_dropout hidden_dropout feat_proj_dropout mask_time_prob layer_dropout warmup_steps fleurs_only
+curl -sL "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh" > "Miniconda3.sh"
+```
+```
+bash Miniconda3.sh
+```
+Follow all prompts, and accept all defaults. Next, close terminal and restart, then run:
+```
+conda update conda
+```
+2. **Create Conda Virtual Environment**
+
+Create a virtual environment with Python 3.10
+```
+conda create -n asr python=3.10
+```
+Activate this environment
+```
+conda activate asr
+```
+Now, every package you install will be installed only in this virtual environment.
+
+3. **Install Jupyter Notebook:**
+```
+pip install notebook
 ```
 
-You can choose hyperparameters and specify the output directory.
+4. **Run Jupyter Notebook**
+In the nlp-gpu-02 terminal, in the environment run:
+```
+jupyter notebook --no-browser --port=8080
+```
+You should see some output, then 
+Now, open a terminal in your *local machine* and run
+``
+
+
+## Google Colab Pro
