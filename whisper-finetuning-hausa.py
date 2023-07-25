@@ -138,7 +138,7 @@ if fleurs_only is False:
 val_audio_hausa = []
 val_transcriptions_hausa = []
 
-for elem in load_dataset("google/fleurs", "ha_ng", split="validation", cache_dir=cache_dir):
+for elem in fleurs_hausa_val:
     assert elem["audio"]["sampling_rate"] == model_sampling_rate
     val_audio_hausa.append(elem["audio"]["array"])
     val_transcriptions_hausa.append(elem["raw_transcription"])
@@ -163,7 +163,7 @@ if fleurs_only is False:
 test_audio_hausa = []
 test_transcriptions_hausa = []
 
-for elem in load_dataset("google/fleurs", "ha_ng", split="test", cache_dir=cache_dir):
+for elem in fleurs_hausa_test:
     assert elem["audio"]["sampling_rate"] == model_sampling_rate
     test_audio_hausa.append(elem["audio"]["array"])
     test_transcriptions_hausa.append(elem["raw_transcription"])

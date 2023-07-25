@@ -60,7 +60,7 @@ pretrained_model_card = sys.argv[1]
 
 training_experiment_number = sys.argv[2]
 
-fleurs_only = True if sys.argv[12] == "fleurs" else False
+fleurs_only = True if sys.argv[13] == "fleurs" else False
 
 adapters = True if (pretrained_model_card == "facebook/mms-1b-all") else False
 
