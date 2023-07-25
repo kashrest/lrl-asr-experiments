@@ -422,6 +422,7 @@ training_args = TrainingArguments(
   gradient_accumulation_steps=gradient_accumulation_steps,
   evaluation_strategy="steps",
   num_train_epochs=num_train_epochs,
+  gradient_checkpointing=True, # another way to save GPU memory by recomputing gradients (less memory, more time)
   fp16=True,
   save_steps=100,
   eval_steps=100,
