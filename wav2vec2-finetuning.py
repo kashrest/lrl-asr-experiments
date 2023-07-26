@@ -76,9 +76,9 @@ except:
 cache_dir_fleurs = "/data/users/kashrest/lrl-asr-experiments/data/fleurs"
 cache_dir_cv_13 = cache_dir="/data/users/kashrest/lrl-asr-experiments/data/cv_13"
 
-fleurs_hausa_train = load_dataset("google/fleurs", "ha_ng", split="train", cache_dir=cache_dir_fleurs)
-fleurs_hausa_val = load_dataset("google/fleurs", "ha_ng", split="validation", cache_dir=cache_dir_fleurs)
-fleurs_hausa_test = load_dataset("google/fleurs", "ha_ng", split="test", cache_dir=cache_dir_fleurs)
+fleurs_hausa_train = load_dataset("google/fleurs", "ig_ng", split="train", cache_dir=cache_dir_fleurs)
+fleurs_hausa_val = load_dataset("google/fleurs", "ig_ng", split="validation", cache_dir=cache_dir_fleurs)
+fleurs_hausa_test = load_dataset("google/fleurs", "ig_ng", split="test", cache_dir=cache_dir_fleurs)
 
 cv_hausa_train, cv_hausa_val, cv_hausa_test = None, None, None
 bible_train_hausa_transcription_paths, bible_val_hausa_transcription_paths, bible_test_hausa_transcription_paths = None, None, None
@@ -280,11 +280,11 @@ class ASRDatasetWav2Vec2(torch.utils.data.Dataset):
 
 
 # Save vocabulary file
-hausa_vocab_file = out_dir+"vocab_hausa_combined_train_val_test.json"
+hausa_vocab_file = out_dir+"vocab_igbo_combined_train_val_test.json"
 tokenizer = None
 
 if adapters is True:
-    target_lang = "hau"
+    target_lang = "ibo"
     new_vocab_dict = {target_lang: vocab_dict}
     with open(hausa_vocab_file, 'w') as vocab_file:
         json.dump(new_vocab_dict, vocab_file)
