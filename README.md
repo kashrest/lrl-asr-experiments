@@ -32,6 +32,12 @@ Create a virtual environment with Python 3.10 using `conda`
 ```
 conda create -n asr python=3.10
 ```
+Initialize conda
+
+```
+source /path/to/.bashrc
+```
+
 Activate this environment
 ```
 conda activate asr
