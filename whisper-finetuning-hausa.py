@@ -36,7 +36,7 @@ assert len(sys.argv) == 7
 #python whisper-finetuning-experiments.py "openai/whisper-large" "fleurs_only_preprocessed_experiment_1" 16 1e-5 20 fleurs
 #python whisper-finetuning-experiments.py "openai/whisper-large" "fleurs_only_preprocessed_experiment_1" 16 1e-5 20 combined
 
-root = "/data/users/kashrest/lrl-asr-experiments/"
+root = "/data/users/kashrest/lrl-asr-experiments/backup/model_checkpoints/"
 model_card = sys.argv[1]
 experiment_name = sys.argv[2]
 train_batch_size = int(sys.argv[3])
@@ -55,8 +55,8 @@ except:
 # In[ ]:
 
 
-cache_dir_fleurs = "/data/users/kashrest/lrl-asr-experiments/data/fleurs"
-cache_dir_cv_13 = cache_dir="/data/users/kashrest/lrl-asr-experiments/data/cv_13"
+cache_dir_fleurs = "/data/users/kashrest/lrl-asr-experiments/backup/data/fleurs"
+cache_dir_cv_13 = cache_dir="/data/users/kashrest/lrl-asr-experiments/backup/data/cv_13"
 
 fleurs_hausa_train = load_dataset("google/fleurs", "ha_ng", split="train", cache_dir=cache_dir_fleurs)
 fleurs_hausa_val = load_dataset("google/fleurs", "ha_ng", split="validation", cache_dir=cache_dir_fleurs)
@@ -84,7 +84,7 @@ if fleurs_only is False:
     bible_test_hausa_transcription_paths = []
     bible_test_hausa_audio_paths = []
 
-    for root, dirs, files in os.walk("./data/open_slr_129/hausa/train"):
+    for root, dirs, files in os.walk("./backup/data/open_slr_129/hausa/train"):
         if len(files) > 0:
             for file in files:
                 if file[-3:] == "txt":
@@ -92,7 +92,7 @@ if fleurs_only is False:
                 elif file [-4:] == "flac":
                     bible_train_hausa_audio_paths.append(root+"/"+file)
 
-    for root, dirs, files in os.walk("./data/open_slr_129/hausa/dev"):
+    for root, dirs, files in os.walk("./backup/data/open_slr_129/hausa/dev"):
         if len(files) > 0:
             for file in files:
                 if file[-3:] == "txt":
@@ -100,7 +100,7 @@ if fleurs_only is False:
                 elif file [-4:] == "flac":
                     bible_val_hausa_audio_paths.append(root+"/"+file)
 
-    for root, dirs, files in os.walk("./data/open_slr_129/hausa/test"):
+    for root, dirs, files in os.walk("./backup/data/open_slr_129/hausa/test"):
         if len(files) > 0:
             for file in files:
                 if file[-3:] == "txt":
